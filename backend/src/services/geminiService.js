@@ -55,13 +55,13 @@ const generateJSON = async (prompt) => {
   const client = getClient();
 
   const response = await client.chat.completions.create({
-    model: "openrouter/free",
+    model: "openai/gpt-oss-20b:free",
 
     messages: [
       {
         role: "system",
         content:
-          "You are an expert AI interview assistant. Return ONLY valid JSON. Do not use markdown code fences. Do not add explanations outside the JSON.",
+          "You are an expert AI interview assistant. Return ONLY valid JSON. Never return markdown, explanations, safety labels, or text outside the JSON object.",
       },
       {
         role: "user",
@@ -82,14 +82,12 @@ const generateJSON = async (prompt) => {
     throw new Error("OpenRouter returned an empty response");
   }
 
-  // Remove markdown code fences if the model returns them
   text = text
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  // Extract the JSON object if the model adds extra text
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
 
@@ -112,7 +110,7 @@ export const generateInterviewQuestions = async ({
   questionCount,
 }) => {
   const prompt = `
-You are an expert interviewer.
+You are an expert technical interviewer.
 
 Candidate Role: ${role}
 Difficulty: ${difficulty}
@@ -123,14 +121,15 @@ ${getModeInstructions(mode)}
 Generate exactly ${questionCount} interview questions.
 
 Rules:
-- Relevant to the candidate's role.
+- Questions must be relevant to the candidate's role.
 - Match the requested difficulty.
-- Avoid duplicates.
+- Avoid duplicate questions.
 - Cover different concepts.
-- Make questions realistic.
-- Return exactly the requested number of questions.
+- Make questions realistic for an actual interview.
+- Return exactly ${questionCount} questions.
 
-Return JSON:
+Return ONLY this JSON structure:
+
 {
   "questions": [
     {
@@ -169,7 +168,8 @@ Evaluate the candidate fairly.
 
 Score every category from 0 to 100.
 
-Return JSON:
+Return ONLY this JSON structure:
+
 {
   "technicalAccuracy": 0,
   "completeness": 0,
@@ -218,11 +218,14 @@ ${weakAreas.join(", ") || "No specific weak areas yet"}
 Rules:
 - Prioritize weak areas.
 - Make the plan practical.
-- Include technical preparation, interview practice and communication.
+- Include technical preparation.
+- Include interview practice.
+- Include communication improvement.
 - Create exactly 4 weeks.
 - Each week needs topics and actionable tasks.
 
-Return JSON:
+Return ONLY this JSON structure:
+
 {
   "targetRole": "string",
   "goals": ["string"],
@@ -284,9 +287,10 @@ Rules:
 - Score 0-49 → easy.
 - Do not repeat the previous question.
 - Test a related but different concept.
-- Keep it relevant to the role.
+- Keep it relevant to the candidate's role.
 
-Return JSON:
+Return ONLY this JSON structure:
+
 {
   "question": "string",
   "category": "string",
