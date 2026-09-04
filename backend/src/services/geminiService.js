@@ -47,59 +47,98 @@ behavioral questions.
 `;
 
     default:
-      return "Focus on relevant interview questions for the candidate's role.";
+      return `
+Focus on relevant interview questions for the candidate's role.
+`;
   }
 };
 
 const generateJSON = async (prompt) => {
   const client = getClient();
 
-  const response = await client.chat.completions.create({
-    model: "google/gemma-4-26b-a4b-it:free",
-
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert AI interview assistant. Return ONLY valid JSON. Never return markdown, explanations, safety labels, or text outside the JSON object.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-
-    temperature: 0.2,
-
-    response_format: {
-      type: "json_object",
-    },
-  });
-
-  let text = response.choices?.[0]?.message?.content?.trim();
-
-  if (!text) {
-    throw new Error("OpenRouter returned an empty response");
-  }
-
-  text = text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-
-  if (start !== -1 && end !== -1 && end > start) {
-    text = text.slice(start, end + 1);
-  }
-
   try {
-    return JSON.parse(text);
+    const response = await client.chat.completions.create({
+      model: "z-ai/glm-5.2:free",
+
+      extra_body: {
+        models: [
+          "google/gemma-4-26b-a4b-it:free",
+          "minimax/minimax-m3:free",
+        ],
+      },
+
+      messages: [
+        {
+          role: "system",
+          content: `
+You are an expert AI interview assistant.
+
+Return ONLY valid JSON.
+
+Do not use markdown.
+Do not use code fences.
+Do not add explanations.
+Do not return safety labels.
+Do not return any text outside the JSON object.
+`,
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+
+      temperature: 0.2,
+
+      response_format: {
+        type: "json_object",
+      },
+
+      plugins: [
+        {
+          id: "response-healing",
+        },
+      ],
+    });
+
+    let text = response.choices?.[0]?.message?.content?.trim();
+
+    if (!text) {
+      throw new Error("AI returned an empty response");
+    }
+
+    // Remove markdown code fences
+    text = text
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+
+    // Extract JSON object
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+
+    if (start !== -1 && end !== -1 && end > start) {
+      text = text.slice(start, end + 1);
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch (parseError) {
+      console.error("AI returned invalid JSON:", text);
+
+      throw new Error("AI returned invalid JSON");
+    }
   } catch (error) {
-    console.error("Invalid AI JSON:", text);
-    throw new Error("OpenRouter returned invalid JSON");
+    console.error("OpenRouter AI Error:", {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+    });
+
+    throw new Error(
+      error.message || "AI service temporarily unavailable"
+    );
   }
 };
 
@@ -110,7 +149,7 @@ export const generateInterviewQuestions = async ({
   questionCount,
 }) => {
   const prompt = `
-You are an expert technical interviewer.
+You are an expert interviewer.
 
 Candidate Role: ${role}
 Difficulty: ${difficulty}
@@ -123,12 +162,12 @@ Generate exactly ${questionCount} interview questions.
 Rules:
 - Questions must be relevant to the candidate's role.
 - Match the requested difficulty.
-- Avoid duplicate questions.
+- Avoid duplicates.
 - Cover different concepts.
-- Make questions realistic for an actual interview.
+- Make questions realistic.
 - Return exactly ${questionCount} questions.
 
-Return ONLY this JSON structure:
+Return ONLY this JSON:
 
 {
   "questions": [
@@ -141,7 +180,13 @@ Return ONLY this JSON structure:
 }
 `;
 
-  return generateJSON(prompt);
+  const result = await generateJSON(prompt);
+
+  if (!Array.isArray(result.questions)) {
+    throw new Error("AI returned an invalid questions format");
+  }
+
+  return result;
 };
 
 export const evaluateAnswer = async ({
@@ -168,7 +213,7 @@ Evaluate the candidate fairly.
 
 Score every category from 0 to 100.
 
-Return ONLY this JSON structure:
+Return ONLY this JSON:
 
 {
   "technicalAccuracy": 0,
@@ -184,7 +229,26 @@ Return ONLY this JSON structure:
 }
 `;
 
-  return generateJSON(prompt);
+  const result = await generateJSON(prompt);
+
+  return {
+    technicalAccuracy: Number(result.technicalAccuracy) || 0,
+    completeness: Number(result.completeness) || 0,
+    communication: Number(result.communication) || 0,
+    confidence: Number(result.confidence) || 0,
+    overallScore: Number(result.overallScore) || 0,
+    strengths: Array.isArray(result.strengths)
+      ? result.strengths
+      : [],
+    weaknesses: Array.isArray(result.weaknesses)
+      ? result.weaknesses
+      : [],
+    missingConcepts: Array.isArray(result.missingConcepts)
+      ? result.missingConcepts
+      : [],
+    idealAnswer: result.idealAnswer || "",
+    followUpQuestion: result.followUpQuestion || "",
+  };
 };
 
 export const generatePreparationPlan = async ({
@@ -224,7 +288,7 @@ Rules:
 - Create exactly 4 weeks.
 - Each week needs topics and actionable tasks.
 
-Return ONLY this JSON structure:
+Return ONLY this JSON:
 
 {
   "targetRole": "string",
@@ -289,7 +353,7 @@ Rules:
 - Test a related but different concept.
 - Keep it relevant to the candidate's role.
 
-Return ONLY this JSON structure:
+Return ONLY this JSON:
 
 {
   "question": "string",
