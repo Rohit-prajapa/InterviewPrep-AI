@@ -56,32 +56,51 @@ const generateJSON = async (prompt) => {
 
   const response = await client.chat.completions.create({
     model: "openrouter/free",
+
     messages: [
       {
         role: "system",
         content:
-          "You are an expert AI interview assistant. Return valid JSON only.",
+          "You are an expert AI interview assistant. Return ONLY valid JSON. Do not use markdown code fences. Do not add explanations outside the JSON.",
       },
       {
         role: "user",
         content: prompt,
       },
     ],
-    temperature: 0.3,
+
+    temperature: 0.2,
+
     response_format: {
       type: "json_object",
     },
   });
 
-  const text = response.choices?.[0]?.message?.content?.trim();
+  let text = response.choices?.[0]?.message?.content?.trim();
 
   if (!text) {
     throw new Error("OpenRouter returned an empty response");
   }
 
+  // Remove markdown code fences if the model returns them
+  text = text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  // Extract the JSON object if the model adds extra text
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  if (start !== -1 && end !== -1 && end > start) {
+    text = text.slice(start, end + 1);
+  }
+
   try {
     return JSON.parse(text);
-  } catch {
+  } catch (error) {
+    console.error("Invalid AI JSON:", text);
     throw new Error("OpenRouter returned invalid JSON");
   }
 };
@@ -109,6 +128,7 @@ Rules:
 - Avoid duplicates.
 - Cover different concepts.
 - Make questions realistic.
+- Return exactly the requested number of questions.
 
 Return JSON:
 {
@@ -145,7 +165,7 @@ ${question}
 Candidate Answer:
 ${answer}
 
-Evaluate fairly.
+Evaluate the candidate fairly.
 
 Score every category from 0 to 100.
 
@@ -170,12 +190,12 @@ Return JSON:
 export const generatePreparationPlan = async ({
   targetRole,
   experience,
-  skills,
+  skills = [],
   averageScore,
   technicalAccuracy,
   communication,
   confidence,
-  weakAreas,
+  weakAreas = [],
 }) => {
   const prompt = `
 You are an expert interview preparation coach.
