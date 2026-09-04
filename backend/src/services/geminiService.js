@@ -1,13 +1,17 @@
 import OpenAI from "openai";
 
 const getClient = () => {
-  if (!process.env.GROQ_API_KEY) {
-    throw new Error("GROQ_API_KEY is not configured");
+  if (!process.env.OPENROUTER_API_KEY) {
+    throw new Error("OPENROUTER_API_KEY is not configured");
   }
 
   return new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
-    baseURL: "https://api.groq.com/openai/v1",
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": "https://interview-prep-ai-6acw.vercel.app",
+      "X-Title": "InterviewPrep AI",
+    },
   });
 };
 
@@ -51,11 +55,12 @@ const generateJSON = async (prompt) => {
   const client = getClient();
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-20b",
+    model: "openrouter/free",
     messages: [
       {
         role: "system",
-        content: "You are an expert AI interview assistant. Return valid JSON only.",
+        content:
+          "You are an expert AI interview assistant. Return valid JSON only.",
       },
       {
         role: "user",
@@ -71,10 +76,14 @@ const generateJSON = async (prompt) => {
   const text = response.choices?.[0]?.message?.content?.trim();
 
   if (!text) {
-    throw new Error("Groq returned an empty response");
+    throw new Error("OpenRouter returned an empty response");
   }
 
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("OpenRouter returned invalid JSON");
+  }
 };
 
 export const generateInterviewQuestions = async ({
