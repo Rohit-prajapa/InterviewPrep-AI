@@ -1,20 +1,74 @@
 # InterviewPrep AI
 
-AI-Powered Interview Preparation Platform.
+AI-powered interview preparation and mock interview platform built with React, Node.js, Express, MongoDB and Google Gemini.
 
-## Stack
-- Frontend: React, Vite, Tailwind CSS, Axios
-- Backend: Node.js, Express.js, MongoDB, JWT
-- AI: Google Gemini API
-- Deployment: Vercel + Render
+## 🚀 Features
 
-## Structure
-- `frontend/` React application
-- `backend/` Express API
-- `docs/` architecture and API documentation
+- 🔐 JWT authentication
+- 🤖 AI-generated interview questions
+- 🎯 AI-powered answer evaluation
+- 🧠 Adaptive interview difficulty
+- 💼 Technical, HR, Behavioral and Mixed modes
+- 📊 Performance analytics
+- 📈 Score and skill tracking
+- 📚 Personal question bank
+- 📌 Pin, edit and delete questions
+- 🗓️ Personalized 4-week AI preparation plan
+- 🔥 Practice streak tracking
+- 📝 Interview history and results
+- ⚡ RESTful API architecture
+- 🛡️ Input validation and rate limiting
+- 📖 Swagger API documentation
+- 🧪 Automated backend tests
 
-## Getting Started
-1. Install dependencies in `frontend` and `backend`.
-2. Copy `.env.example` to `.env` in each application.
-3. Add your MongoDB, JWT, and Gemini configuration.
-4. Start backend and frontend development servers.
+## 🛠️ Tech Stack
+
+### Frontend
+
+- React
+- Vite
+- Tailwind CSS
+- Axios
+- React Router
+
+### Backend
+
+- Node.js
+- Express.js
+- MongoDB
+- Mongoose
+- JWT
+- bcryptjs
+- Express Validator
+- Morgan
+- Express Rate Limit
+- Swagger UI
+
+### AI
+
+- Google Gemini API
+
+### Deployment
+
+- Vercel
+- Render
+
+## 🏗️ Architecture
+
+```text
+React + Vite
+     │
+     │ Axios / REST API
+     ▼
+Node.js + Express
+     │
+     ├── Authentication
+     ├── Interview Engine
+     ├── AI Services
+     ├── Evaluation
+     ├── Analytics
+     └── Preparation Plans
+     │
+     ├───────────────┐
+     ▼               ▼
+MongoDB          Google Gemini
