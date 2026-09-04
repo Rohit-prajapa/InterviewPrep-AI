@@ -55,7 +55,7 @@ const generateJSON = async (prompt) => {
   const client = getClient();
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-20b:free",
+    model: "google/gemma-4-26b-a4b-it:free",
 
     messages: [
       {
