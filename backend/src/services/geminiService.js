@@ -1,19 +1,17 @@
 import OpenAI from "openai";
 
 const getClient = () => {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is not configured");
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not configured");
   }
 
   return new OpenAI({
-    apiKey: process.env.OPENROUTER_API_KEY,
-    baseURL: "https://openrouter.ai/api/v1",
-    defaultHeaders: {
-      "HTTP-Referer": "https://interview-prep-ai-6acw.vercel.app",
-      "X-Title": "InterviewPrep AI",
-    },
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: "https://api.groq.com/openai/v1",
   });
 };
+
+const MODEL = "openai/gpt-oss-20b";
 
 const getModeInstructions = (mode) => {
   switch (mode) {
@@ -53,34 +51,41 @@ Focus on relevant interview questions for the candidate's role.
   }
 };
 
+const cleanJsonText = (text) => {
+  if (!text) {
+    throw new Error("Groq returned an empty response");
+  }
+
+  let cleaned = text.trim();
+
+  cleaned = cleaned
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  const objectStart = cleaned.indexOf("{");
+  const objectEnd = cleaned.lastIndexOf("}");
+
+  if (objectStart !== -1 && objectEnd > objectStart) {
+    cleaned = cleaned.slice(objectStart, objectEnd + 1);
+  }
+
+  return cleaned;
+};
+
 const generateJSON = async (prompt) => {
   const client = getClient();
 
   try {
     const response = await client.chat.completions.create({
-      model: "z-ai/glm-5.2:free",
-
-      extra_body: {
-        models: [
-          "google/gemma-4-26b-a4b-it:free",
-          "minimax/minimax-m3:free",
-        ],
-      },
+      model: MODEL,
 
       messages: [
         {
           role: "system",
-          content: `
-You are an expert AI interview assistant.
-
-Return ONLY valid JSON.
-
-Do not use markdown.
-Do not use code fences.
-Do not add explanations.
-Do not return safety labels.
-Do not return any text outside the JSON object.
-`,
+          content:
+            "You are an expert AI interview assistant. Return ONLY valid JSON. Never return markdown or explanations outside the JSON object.",
         },
         {
           role: "user",
@@ -93,61 +98,41 @@ Do not return any text outside the JSON object.
       response_format: {
         type: "json_object",
       },
-
-      plugins: [
-        {
-          id: "response-healing",
-        },
-      ],
     });
 
-    let text = response.choices?.[0]?.message?.content?.trim();
+    const rawText =
+      response.choices?.[0]?.message?.content || "";
 
-    if (!text) {
-      throw new Error("AI returned an empty response");
-    }
-
-    // Remove markdown code fences
-    text = text
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-
-    // Extract JSON object
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-
-    if (start !== -1 && end !== -1 && end > start) {
-      text = text.slice(start, end + 1);
-    }
+    const cleanedText = cleanJsonText(rawText);
 
     try {
-      return JSON.parse(text);
+      return JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error("AI returned invalid JSON:", text);
-
-      throw new Error("AI returned invalid JSON");
+      console.error("Invalid Groq JSON:", rawText);
+      throw new Error("Groq returned invalid JSON");
     }
   } catch (error) {
-    console.error("OpenRouter AI Error:", {
+    console.error("Groq AI Error:", {
       message: error.message,
       status: error.status,
       code: error.code,
     });
 
-    throw new Error(
-      error.message || "AI service temporarily unavailable"
-    );
+    throw error;
   }
 };
 
 export const generateInterviewQuestions = async ({
   role,
-  difficulty,
-  mode,
-  questionCount,
+  difficulty = "medium",
+  mode = "technical",
+  questionCount = 5,
 }) => {
+  const safeQuestionCount = Math.min(
+    Math.max(Number(questionCount) || 5, 1),
+    20
+  );
+
   const prompt = `
 You are an expert interviewer.
 
@@ -157,24 +142,25 @@ Interview Mode: ${mode}
 
 ${getModeInstructions(mode)}
 
-Generate exactly ${questionCount} interview questions.
+Generate exactly ${safeQuestionCount} interview questions.
 
 Rules:
 - Questions must be relevant to the candidate's role.
 - Match the requested difficulty.
 - Avoid duplicates.
 - Cover different concepts.
-- Make questions realistic.
-- Return exactly ${questionCount} questions.
+- Make questions realistic for an actual interview.
+- Return exactly ${safeQuestionCount} questions.
+- Do not include answers.
 
-Return ONLY this JSON:
+Return ONLY valid JSON in this exact format:
 
 {
   "questions": [
     {
       "question": "string",
       "category": "string",
-      "difficulty": "easy|medium|hard"
+      "difficulty": "easy"
     }
   ]
 }
@@ -183,10 +169,12 @@ Return ONLY this JSON:
   const result = await generateJSON(prompt);
 
   if (!Array.isArray(result.questions)) {
-    throw new Error("AI returned an invalid questions format");
+    throw new Error("Groq returned an invalid questions format");
   }
 
-  return result;
+  return {
+    questions: result.questions.slice(0, safeQuestionCount),
+  };
 };
 
 export const evaluateAnswer = async ({
@@ -213,7 +201,7 @@ Evaluate the candidate fairly.
 
 Score every category from 0 to 100.
 
-Return ONLY this JSON:
+Return ONLY valid JSON in this exact format:
 
 {
   "technicalAccuracy": 0,
@@ -232,22 +220,47 @@ Return ONLY this JSON:
   const result = await generateJSON(prompt);
 
   return {
-    technicalAccuracy: Number(result.technicalAccuracy) || 0,
-    completeness: Number(result.completeness) || 0,
-    communication: Number(result.communication) || 0,
-    confidence: Number(result.confidence) || 0,
-    overallScore: Number(result.overallScore) || 0,
+    technicalAccuracy: Math.min(
+      Math.max(Number(result.technicalAccuracy) || 0, 0),
+      100
+    ),
+
+    completeness: Math.min(
+      Math.max(Number(result.completeness) || 0, 0),
+      100
+    ),
+
+    communication: Math.min(
+      Math.max(Number(result.communication) || 0, 0),
+      100
+    ),
+
+    confidence: Math.min(
+      Math.max(Number(result.confidence) || 0, 0),
+      100
+    ),
+
+    overallScore: Math.min(
+      Math.max(Number(result.overallScore) || 0, 0),
+      100
+    ),
+
     strengths: Array.isArray(result.strengths)
       ? result.strengths
       : [],
+
     weaknesses: Array.isArray(result.weaknesses)
       ? result.weaknesses
       : [],
+
     missingConcepts: Array.isArray(result.missingConcepts)
       ? result.missingConcepts
       : [],
+
     idealAnswer: result.idealAnswer || "",
-    followUpQuestion: result.followUpQuestion || "",
+
+    followUpQuestion:
+      result.followUpQuestion || "",
   };
 };
 
@@ -255,10 +268,10 @@ export const generatePreparationPlan = async ({
   targetRole,
   experience,
   skills = [],
-  averageScore,
-  technicalAccuracy,
-  communication,
-  confidence,
+  averageScore = 0,
+  technicalAccuracy = 0,
+  communication = 0,
+  confidence = 0,
   weakAreas = [],
 }) => {
   const prompt = `
@@ -288,7 +301,7 @@ Rules:
 - Create exactly 4 weeks.
 - Each week needs topics and actionable tasks.
 
-Return ONLY this JSON:
+Return ONLY valid JSON:
 
 {
   "targetRole": "string",
@@ -310,20 +323,18 @@ Return ONLY this JSON:
 
 export const generateAdaptiveQuestion = async ({
   role,
-  mode,
+  mode = "technical",
   previousQuestion,
   previousAnswer,
   previousScore,
-  difficulty,
+  difficulty = "medium",
 }) => {
-  let nextDifficulty = difficulty;
+  let nextDifficulty = "medium";
 
-  if (previousScore >= 80) {
+  if (Number(previousScore) >= 80) {
     nextDifficulty = "hard";
-  } else if (previousScore < 50) {
+  } else if (Number(previousScore) < 50) {
     nextDifficulty = "easy";
-  } else {
-    nextDifficulty = "medium";
   }
 
   const prompt = `
@@ -353,7 +364,7 @@ Rules:
 - Test a related but different concept.
 - Keep it relevant to the candidate's role.
 
-Return ONLY this JSON:
+Return ONLY valid JSON:
 
 {
   "question": "string",
@@ -362,5 +373,11 @@ Return ONLY this JSON:
 }
 `;
 
-  return generateJSON(prompt);
+  const result = await generateJSON(prompt);
+
+  return {
+    question: result.question || "",
+    category: result.category || "General",
+    difficulty: nextDifficulty,
+  };
 };
