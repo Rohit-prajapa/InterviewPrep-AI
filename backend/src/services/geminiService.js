@@ -1,78 +1,13 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
-const getModel = () => {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured");
+const getClient = () => {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-  return genAI.getGenerativeModel({
-    model: "gemini-3.6-flash",
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
   });
-};
-
-const cleanJson = (text) => {
-  const cleaned = text
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-
-  if (start === -1 || end === -1) {
-    throw new Error("Gemini returned invalid JSON");
-  }
-
-  return JSON.parse(cleaned.slice(start, end + 1));
-};
-
-const generateWithRetry = async (model, prompt, retries = 2) => {
-  let lastError;
-
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await model.generateContent(prompt);
-    } catch (error) {
-      lastError = error;
-
-      const message = error?.message || "";
-
-      const isRateLimit =
-        message.includes("429") ||
-        message.includes("Too Many Requests") ||
-        message.includes("quota") ||
-        message.includes("Quota exceeded");
-
-      const isTemporary =
-        message.includes("503") ||
-        message.includes("Service Unavailable") ||
-        message.includes("high demand");
-
-      if (isRateLimit) {
-        throw new Error(
-          "Gemini API quota exceeded. Please wait and try again later."
-        );
-      }
-
-      if (!isTemporary || attempt === retries) {
-        throw error;
-      }
-
-      const delay = attempt * 3000;
-
-      console.log(
-        `Gemini temporary error. Retrying in ${delay / 1000}s...`
-      );
-
-      await new Promise((resolve) =>
-        setTimeout(resolve, delay)
-      );
-    }
-  }
-
-  throw lastError;
 };
 
 const getModeInstructions = (mode) => {
@@ -129,19 +64,45 @@ Focus on relevant interview questions for the candidate's role.
   }
 };
 
+const generateJSON = async (prompt) => {
+  const client = getClient();
+
+  const response = await client.responses.create({
+    model: "gpt-5.6-luna",
+    input: prompt,
+  });
+
+  const text = response.output_text?.trim();
+
+  if (!text) {
+    throw new Error("OpenAI returned an empty response");
+  }
+
+  const cleaned = text
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+
+  if (start === -1 || end === -1) {
+    throw new Error("OpenAI returned invalid JSON");
+  }
+
+  return JSON.parse(cleaned.slice(start, end + 1));
+};
+
 export const generateInterviewQuestions = async ({
   role,
   difficulty,
   mode,
   questionCount,
 }) => {
-  const model = getModel();
-
   const modeInstructions = getModeInstructions(mode);
 
   const prompt = `
-You are an expert interviewer conducting a professional
-interview.
+You are an expert interviewer conducting a professional interview.
 
 Candidate Role:
 ${role}
@@ -162,10 +123,6 @@ Rules:
 - Avoid duplicate questions.
 - Cover different important concepts.
 - Make questions realistic for an actual interview.
-- For HR questions, evaluate personality, motivation and company fit.
-- For behavioral questions, use realistic workplace situations.
-- For technical questions, test actual technical understanding.
-- For mixed mode, maintain a balanced mixture of question types.
 - Return ONLY valid JSON.
 - Do not use markdown.
 
@@ -181,10 +138,7 @@ JSON format:
 }
 `;
 
-  const result = await generateWithRetry(model, prompt);
-  const text = result.response.text();
-
-  return cleanJson(text);
+  return generateJSON(prompt);
 };
 
 export const evaluateAnswer = async ({
@@ -193,8 +147,6 @@ export const evaluateAnswer = async ({
   role,
   mode = "technical",
 }) => {
-  const model = getModel();
-
   const modeInstructions = getModeInstructions(mode);
 
   const prompt = `
@@ -218,12 +170,6 @@ Evaluate the candidate fairly.
 
 Score every category from 0 to 100.
 
-Evaluation should consider the interview mode:
-- Technical: technical accuracy and completeness are most important.
-- HR: communication, clarity, confidence and suitability are important.
-- Behavioral: communication, confidence, reasoning and completeness are important.
-- Mixed: balance all relevant dimensions.
-
 Return ONLY valid JSON.
 Do not use markdown.
 
@@ -242,10 +188,7 @@ JSON format:
 }
 `;
 
-  const result = await generateWithRetry(model, prompt);
-  const text = result.response.text();
-
-  return cleanJson(text);
+  return generateJSON(prompt);
 };
 
 export const generatePreparationPlan = async ({
@@ -258,8 +201,6 @@ export const generatePreparationPlan = async ({
   confidence,
   weakAreas,
 }) => {
-  const model = getModel();
-
   const prompt = `
 You are an expert interview preparation coach.
 
@@ -304,10 +245,7 @@ JSON format:
 }
 `;
 
-  const result = await generateWithRetry(model, prompt);
-  const text = result.response.text();
-
-  return cleanJson(text);
+  return generateJSON(prompt);
 };
 
 export const generateAdaptiveQuestion = async ({
@@ -318,8 +256,6 @@ export const generateAdaptiveQuestion = async ({
   previousScore,
   difficulty,
 }) => {
-  const model = getModel();
-
   let nextDifficulty = difficulty;
 
   if (previousScore >= 80) {
@@ -346,7 +282,7 @@ ${modeInstructions}
 Previous Question:
 ${previousQuestion}
 
-Candidate Answer:
+Previous Answer:
 ${previousAnswer}
 
 Previous Overall Score:
@@ -374,8 +310,5 @@ JSON format:
 }
 `;
 
-  const result = await generateWithRetry(model, prompt);
-  const text = result.response.text();
-
-  return cleanJson(text);
+  return generateJSON(prompt);
 };
