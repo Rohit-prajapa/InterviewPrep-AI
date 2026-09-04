@@ -1,12 +1,13 @@
 import OpenAI from "openai";
 
 const getClient = () => {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not configured");
   }
 
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: "https://api.groq.com/openai/v1",
   });
 };
 
@@ -22,75 +23,58 @@ role-specific engineering skills.
     case "hr":
       return `
 Focus on HR and recruiter questions such as:
-- Tell me about yourself
-- Career goals
-- Strengths and weaknesses
-- Motivation
-- Company fit
-- Teamwork
-- Leadership
-- Conflict handling
+Tell me about yourself, career goals, strengths,
+weaknesses, motivation, company fit, teamwork,
+leadership and conflict handling.
 `;
 
     case "behavioral":
       return `
-Focus on behavioral and situational questions.
-Use realistic workplace scenarios involving:
-- Teamwork
-- Leadership
-- Conflict
-- Problem solving
-- Failure
-- Decision making
-- Adaptability
-
+Focus on behavioral and situational questions involving
+teamwork, leadership, conflict, problem solving,
+failure, decision making and adaptability.
 Prefer STAR-style questions.
 `;
 
     case "mixed":
       return `
-Create a balanced combination of:
-- Technical questions
-- HR questions
-- Behavioral questions
-
-Distribute the questions across these areas.
+Create a balanced combination of technical, HR and
+behavioral questions.
 `;
 
     default:
-      return `
-Focus on relevant interview questions for the candidate's role.
-`;
+      return "Focus on relevant interview questions for the candidate's role.";
   }
 };
 
 const generateJSON = async (prompt) => {
   const client = getClient();
 
-  const response = await client.responses.create({
-    model: "gpt-5.6-luna",
-    input: prompt,
+  const response = await client.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      {
+        role: "system",
+        content: "You are an expert AI interview assistant. Return valid JSON only.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    temperature: 0.3,
+    response_format: {
+      type: "json_object",
+    },
   });
 
-  const text = response.output_text?.trim();
+  const text = response.choices?.[0]?.message?.content?.trim();
 
   if (!text) {
-    throw new Error("OpenAI returned an empty response");
+    throw new Error("Groq returned an empty response");
   }
 
-  const cleaned = text
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-
-  if (start === -1 || end === -1) {
-    throw new Error("OpenAI returned invalid JSON");
-  }
-
-  return JSON.parse(cleaned.slice(start, end + 1));
+  return JSON.parse(text);
 };
 
 export const generateInterviewQuestions = async ({
@@ -99,34 +83,25 @@ export const generateInterviewQuestions = async ({
   mode,
   questionCount,
 }) => {
-  const modeInstructions = getModeInstructions(mode);
-
   const prompt = `
-You are an expert interviewer conducting a professional interview.
+You are an expert interviewer.
 
-Candidate Role:
-${role}
+Candidate Role: ${role}
+Difficulty: ${difficulty}
+Interview Mode: ${mode}
 
-Difficulty:
-${difficulty}
-
-Interview Mode:
-${mode}
-
-${modeInstructions}
+${getModeInstructions(mode)}
 
 Generate exactly ${questionCount} interview questions.
 
 Rules:
-- Questions must be relevant to the candidate's role.
+- Relevant to the candidate's role.
 - Match the requested difficulty.
-- Avoid duplicate questions.
-- Cover different important concepts.
-- Make questions realistic for an actual interview.
-- Return ONLY valid JSON.
-- Do not use markdown.
+- Avoid duplicates.
+- Cover different concepts.
+- Make questions realistic.
 
-JSON format:
+Return JSON:
 {
   "questions": [
     {
@@ -147,33 +122,25 @@ export const evaluateAnswer = async ({
   role,
   mode = "technical",
 }) => {
-  const modeInstructions = getModeInstructions(mode);
-
   const prompt = `
 You are an expert interviewer evaluating a candidate.
 
-Candidate Role:
-${role}
+Candidate Role: ${role}
+Interview Mode: ${mode}
 
-Interview Mode:
-${mode}
+${getModeInstructions(mode)}
 
-${modeInstructions}
-
-Interview Question:
+Question:
 ${question}
 
 Candidate Answer:
 ${answer}
 
-Evaluate the candidate fairly.
+Evaluate fairly.
 
 Score every category from 0 to 100.
 
-Return ONLY valid JSON.
-Do not use markdown.
-
-JSON format:
+Return JSON:
 {
   "technicalAccuracy": 0,
   "completeness": 0,
@@ -206,7 +173,6 @@ You are an expert interview preparation coach.
 
 Create a personalized 4-week interview preparation plan.
 
-Candidate:
 Target Role: ${targetRole}
 Experience: ${experience}
 Skills: ${skills.join(", ") || "Not specified"}
@@ -222,14 +188,12 @@ ${weakAreas.join(", ") || "No specific weak areas yet"}
 
 Rules:
 - Prioritize weak areas.
-- Make the plan practical and achievable.
+- Make the plan practical.
 - Include technical preparation, interview practice and communication.
 - Create exactly 4 weeks.
-- Each week must contain topics and actionable tasks.
-- Return ONLY valid JSON.
-- Do not use markdown.
+- Each week needs topics and actionable tasks.
 
-JSON format:
+Return JSON:
 {
   "targetRole": "string",
   "goals": ["string"],
@@ -266,18 +230,13 @@ export const generateAdaptiveQuestion = async ({
     nextDifficulty = "medium";
   }
 
-  const modeInstructions = getModeInstructions(mode);
-
   const prompt = `
 You are an adaptive AI interviewer.
 
-Candidate Role:
-${role}
+Candidate Role: ${role}
+Interview Mode: ${mode}
 
-Interview Mode:
-${mode}
-
-${modeInstructions}
+${getModeInstructions(mode)}
 
 Previous Question:
 ${previousQuestion}
@@ -285,24 +244,20 @@ ${previousQuestion}
 Previous Answer:
 ${previousAnswer}
 
-Previous Overall Score:
+Previous Score:
 ${previousScore}/100
 
 Generate ONE new interview question.
 
-Adaptive difficulty rules:
-- Score 80-100: increase difficulty to hard.
-- Score 50-79: keep difficulty medium.
-- Score 0-49: reduce difficulty to easy.
+Rules:
+- Score 80-100 → hard.
+- Score 50-79 → medium.
+- Score 0-49 → easy.
 - Do not repeat the previous question.
 - Test a related but different concept.
-- Keep the question relevant to the candidate's role.
-- Follow the selected interview mode.
+- Keep it relevant to the role.
 
-Return ONLY valid JSON.
-Do not use markdown.
-
-JSON format:
+Return JSON:
 {
   "question": "string",
   "category": "string",
