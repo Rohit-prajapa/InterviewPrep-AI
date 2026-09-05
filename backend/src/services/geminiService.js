@@ -1,118 +1,48 @@
-import OpenAI from "openai";
+import { GoogleGenAI, Type } from "@google/genai";
 
-const getClient = () => {
-  if (!process.env.GROQ_API_KEY) {
-    throw new Error("GROQ_API_KEY is not configured");
-  }
+const apiKey = process.env.GEMINI_API_KEY;
 
-  return new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
-    baseURL: "https://api.groq.com/openai/v1",
-  });
-};
+if (!apiKey) {
+  throw new Error("GEMINI_API_KEY is not configured");
+}
 
-const MODEL = "openai/gpt-oss-20b";
+const ai = new GoogleGenAI({
+  apiKey,
+});
 
-const getModeInstructions = (mode) => {
-  switch (mode) {
-    case "technical":
-      return `
-Focus on technical knowledge, programming concepts,
-problem solving, databases, APIs, architecture and
-role-specific engineering skills.
-`;
+const MODEL = "gemini-3.5-flash-lite";
 
-    case "hr":
-      return `
-Focus on HR and recruiter questions such as:
-Tell me about yourself, career goals, strengths,
-weaknesses, motivation, company fit, teamwork,
-leadership and conflict handling.
-`;
 
-    case "behavioral":
-      return `
-Focus on behavioral and situational questions involving
-teamwork, leadership, conflict, problem solving,
-failure, decision making and adaptability.
-Prefer STAR-style questions.
-`;
+// =====================================================
+// Generate Structured JSON
+// =====================================================
 
-    case "mixed":
-      return `
-Create a balanced combination of technical, HR and
-behavioral questions.
-`;
-
-    default:
-      return `
-Focus on relevant interview questions for the candidate's role.
-`;
-  }
-};
-
-const cleanJsonText = (text) => {
-  if (!text) {
-    throw new Error("Groq returned an empty response");
-  }
-
-  let cleaned = text.trim();
-
-  cleaned = cleaned
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  const objectStart = cleaned.indexOf("{");
-  const objectEnd = cleaned.lastIndexOf("}");
-
-  if (objectStart !== -1 && objectEnd > objectStart) {
-    cleaned = cleaned.slice(objectStart, objectEnd + 1);
-  }
-
-  return cleaned;
-};
-
-const generateJSON = async (prompt) => {
-  const client = getClient();
-
+async function generateJSON(prompt, responseSchema) {
   try {
-    const response = await client.chat.completions.create({
+    const response = await ai.models.generateContent({
       model: MODEL,
 
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert AI interview assistant. Return ONLY valid JSON. Never return markdown or explanations outside the JSON object.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      contents: prompt,
 
-      temperature: 0.2,
+      config: {
+        temperature: 0.2,
 
-      response_format: {
-        type: "json_object",
+        responseMimeType: "application/json",
+
+        responseSchema,
       },
     });
 
-    const rawText =
-      response.choices?.[0]?.message?.content || "";
-
-    const cleanedText = cleanJsonText(rawText);
-
-    try {
-      return JSON.parse(cleanedText);
-    } catch (parseError) {
-      console.error("Invalid Groq JSON:", rawText);
-      throw new Error("Groq returned invalid JSON");
+    if (!response.text) {
+      throw new Error("Gemini returned an empty response");
     }
+
+    console.log("Gemini AI response received");
+
+    return JSON.parse(response.text);
+
   } catch (error) {
-    console.error("Groq AI Error:", {
+    console.error("Gemini AI Error:", {
       message: error.message,
       status: error.status,
       code: error.code,
@@ -120,76 +50,113 @@ const generateJSON = async (prompt) => {
 
     throw error;
   }
-};
+}
+
+
+// =====================================================
+// Generate Interview Questions
+// =====================================================
 
 export const generateInterviewQuestions = async ({
   role,
   difficulty = "medium",
+  count = 5,
   mode = "technical",
-  questionCount = 5,
 }) => {
-  const safeQuestionCount = Math.min(
-    Math.max(Number(questionCount) || 5, 1),
-    20
-  );
 
   const prompt = `
-You are an expert interviewer.
+You are an expert technical interviewer.
 
-Candidate Role: ${role}
-Difficulty: ${difficulty}
-Interview Mode: ${mode}
+Generate exactly ${count} interview questions.
 
-${getModeInstructions(mode)}
+Role:
+${role}
 
-Generate exactly ${safeQuestionCount} interview questions.
+Difficulty:
+${difficulty}
+
+Interview Mode:
+${mode}
 
 Rules:
-- Questions must be relevant to the candidate's role.
-- Match the requested difficulty.
-- Avoid duplicates.
-- Cover different concepts.
-- Make questions realistic for an actual interview.
-- Return exactly ${safeQuestionCount} questions.
-- Do not include answers.
-
-Return ONLY valid JSON in this exact format:
-
-{
-  "questions": [
-    {
-      "question": "string",
-      "category": "string",
-      "difficulty": "easy"
-    }
-  ]
-}
+- Questions must be relevant to the role.
+- Questions must be different.
+- Questions should be realistic interview questions.
+- Difficulty must be easy, medium, or hard.
 `;
 
-  const result = await generateJSON(prompt);
+  const schema = {
+    type: Type.OBJECT,
 
-  if (!Array.isArray(result.questions)) {
-    throw new Error("Groq returned an invalid questions format");
+    properties: {
+      questions: {
+        type: Type.ARRAY,
+
+        items: {
+          type: Type.OBJECT,
+
+          properties: {
+            question: {
+              type: Type.STRING,
+            },
+
+            category: {
+              type: Type.STRING,
+            },
+
+            difficulty: {
+              type: Type.STRING,
+              enum: ["easy", "medium", "hard"],
+            },
+          },
+
+          required: [
+            "question",
+            "category",
+            "difficulty",
+          ],
+        },
+      },
+    },
+
+    required: ["questions"],
+  };
+
+  const result = await generateJSON(prompt, schema);
+
+  if (
+    !result ||
+    !Array.isArray(result.questions) ||
+    result.questions.length === 0
+  ) {
+    throw new Error("No questions generated");
   }
 
-  return {
-    questions: result.questions.slice(0, safeQuestionCount),
-  };
+  return result.questions;
 };
+
+
+// =====================================================
+// Evaluate Candidate Answer
+// =====================================================
 
 export const evaluateAnswer = async ({
   question,
   answer,
   role,
-  mode = "technical",
+  difficulty = "medium",
 }) => {
+
   const prompt = `
-You are an expert interviewer evaluating a candidate.
+You are an expert technical interviewer.
 
-Candidate Role: ${role}
-Interview Mode: ${mode}
+Evaluate the candidate's answer objectively.
 
-${getModeInstructions(mode)}
+Role:
+${role}
+
+Difficulty:
+${difficulty}
 
 Question:
 ${question}
@@ -197,153 +164,108 @@ ${question}
 Candidate Answer:
 ${answer}
 
-Evaluate the candidate fairly.
-
 Score every category from 0 to 100.
 
-Return ONLY valid JSON in this exact format:
+Consider:
+- Technical correctness
+- Completeness
+- Communication
+- Confidence
+- Overall performance
 
-{
-  "technicalAccuracy": 0,
-  "completeness": 0,
-  "communication": 0,
-  "confidence": 0,
-  "overallScore": 0,
-  "strengths": ["string"],
-  "weaknesses": ["string"],
-  "missingConcepts": ["string"],
-  "idealAnswer": "string",
-  "followUpQuestion": "string"
-}
+Provide strengths, weaknesses, missing concepts,
+an ideal answer, and one useful follow-up question.
 `;
 
-  const result = await generateJSON(prompt);
+  const schema = {
+    type: Type.OBJECT,
 
-  return {
-    technicalAccuracy: Math.min(
-      Math.max(Number(result.technicalAccuracy) || 0, 0),
-      100
-    ),
+    properties: {
+      technicalAccuracy: {
+        type: Type.NUMBER,
+      },
 
-    completeness: Math.min(
-      Math.max(Number(result.completeness) || 0, 0),
-      100
-    ),
+      completeness: {
+        type: Type.NUMBER,
+      },
 
-    communication: Math.min(
-      Math.max(Number(result.communication) || 0, 0),
-      100
-    ),
+      communication: {
+        type: Type.NUMBER,
+      },
 
-    confidence: Math.min(
-      Math.max(Number(result.confidence) || 0, 0),
-      100
-    ),
+      confidence: {
+        type: Type.NUMBER,
+      },
 
-    overallScore: Math.min(
-      Math.max(Number(result.overallScore) || 0, 0),
-      100
-    ),
+      overallScore: {
+        type: Type.NUMBER,
+      },
 
-    strengths: Array.isArray(result.strengths)
-      ? result.strengths
-      : [],
+      strengths: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.STRING,
+        },
+      },
 
-    weaknesses: Array.isArray(result.weaknesses)
-      ? result.weaknesses
-      : [],
+      weaknesses: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.STRING,
+        },
+      },
 
-    missingConcepts: Array.isArray(result.missingConcepts)
-      ? result.missingConcepts
-      : [],
+      missingConcepts: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.STRING,
+        },
+      },
 
-    idealAnswer: result.idealAnswer || "",
+      idealAnswer: {
+        type: Type.STRING,
+      },
 
-    followUpQuestion:
-      result.followUpQuestion || "",
+      followUpQuestion: {
+        type: Type.STRING,
+      },
+    },
+
+    required: [
+      "technicalAccuracy",
+      "completeness",
+      "communication",
+      "confidence",
+      "overallScore",
+      "strengths",
+      "weaknesses",
+      "missingConcepts",
+      "idealAnswer",
+      "followUpQuestion",
+    ],
   };
+
+  return await generateJSON(prompt, schema);
 };
 
-export const generatePreparationPlan = async ({
-  targetRole,
-  experience,
-  skills = [],
-  averageScore = 0,
-  technicalAccuracy = 0,
-  communication = 0,
-  confidence = 0,
-  weakAreas = [],
-}) => {
-  const prompt = `
-You are an expert interview preparation coach.
 
-Create a personalized 4-week interview preparation plan.
-
-Target Role: ${targetRole}
-Experience: ${experience}
-Skills: ${skills.join(", ") || "Not specified"}
-
-Performance:
-Average Score: ${averageScore}
-Technical Accuracy: ${technicalAccuracy}
-Communication: ${communication}
-Confidence: ${confidence}
-
-Weak Areas:
-${weakAreas.join(", ") || "No specific weak areas yet"}
-
-Rules:
-- Prioritize weak areas.
-- Make the plan practical.
-- Include technical preparation.
-- Include interview practice.
-- Include communication improvement.
-- Create exactly 4 weeks.
-- Each week needs topics and actionable tasks.
-
-Return ONLY valid JSON:
-
-{
-  "targetRole": "string",
-  "goals": ["string"],
-  "weeks": [
-    {
-      "week": 1,
-      "title": "string",
-      "topics": ["string"],
-      "tasks": ["string"],
-      "completed": false
-    }
-  ]
-}
-`;
-
-  return generateJSON(prompt);
-};
+// =====================================================
+// Generate Adaptive Question
+// =====================================================
 
 export const generateAdaptiveQuestion = async ({
   role,
-  mode = "technical",
   previousQuestion,
   previousAnswer,
   previousScore,
   difficulty = "medium",
 }) => {
-  let nextDifficulty = "medium";
-
-  if (Number(previousScore) >= 80) {
-    nextDifficulty = "hard";
-  } else if (Number(previousScore) < 50) {
-    nextDifficulty = "easy";
-  }
 
   const prompt = `
 You are an adaptive AI interviewer.
 
-Candidate Role: ${role}
-Interview Mode: ${mode}
-
-${getModeInstructions(mode)}
+Role:
+${role}
 
 Previous Question:
 ${previousQuestion}
@@ -352,32 +274,138 @@ Previous Answer:
 ${previousAnswer}
 
 Previous Score:
-${previousScore}/100
+${previousScore}
 
-Generate ONE new interview question.
+Current Difficulty:
+${difficulty}
+
+Generate the next interview question.
 
 Rules:
-- Score 80-100 → hard.
-- Score 50-79 → medium.
-- Score 0-49 → easy.
-- Do not repeat the previous question.
-- Test a related but different concept.
-- Keep it relevant to the candidate's role.
-
-Return ONLY valid JSON:
-
-{
-  "question": "string",
-  "category": "string",
-  "difficulty": "${nextDifficulty}"
-}
+- If the candidate performed well, increase difficulty.
+- If the candidate performed poorly, maintain or reduce difficulty.
+- Focus on missing or weak concepts when appropriate.
 `;
 
-  const result = await generateJSON(prompt);
+  const schema = {
+    type: Type.OBJECT,
 
-  return {
-    question: result.question || "",
-    category: result.category || "General",
-    difficulty: nextDifficulty,
+    properties: {
+      question: {
+        type: Type.STRING,
+      },
+
+      category: {
+        type: Type.STRING,
+      },
+
+      difficulty: {
+        type: Type.STRING,
+        enum: ["easy", "medium", "hard"],
+      },
+    },
+
+    required: [
+      "question",
+      "category",
+      "difficulty",
+    ],
   };
+
+  return await generateJSON(prompt, schema);
+};
+
+
+// =====================================================
+// Generate Preparation Plan
+// =====================================================
+
+export const generatePreparationPlan = async ({
+  targetRole,
+  goals = [],
+}) => {
+
+  const prompt = `
+You are an expert interview preparation coach.
+
+Create a practical 4-week interview preparation plan.
+
+Target Role:
+${targetRole}
+
+Candidate Goals:
+${goals.join(", ")}
+
+Create exactly 4 weeks.
+Each week should contain useful topics and tasks.
+`;
+
+  const schema = {
+    type: Type.OBJECT,
+
+    properties: {
+      targetRole: {
+        type: Type.STRING,
+      },
+
+      goals: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.STRING,
+        },
+      },
+
+      weeks: {
+        type: Type.ARRAY,
+
+        items: {
+          type: Type.OBJECT,
+
+          properties: {
+            week: {
+              type: Type.INTEGER,
+            },
+
+            title: {
+              type: Type.STRING,
+            },
+
+            topics: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.STRING,
+              },
+            },
+
+            tasks: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.STRING,
+              },
+            },
+
+            completed: {
+              type: Type.BOOLEAN,
+            },
+          },
+
+          required: [
+            "week",
+            "title",
+            "topics",
+            "tasks",
+            "completed",
+          ],
+        },
+      },
+    },
+
+    required: [
+      "targetRole",
+      "goals",
+      "weeks",
+    ],
+  };
+
+  return await generateJSON(prompt, schema);
 };
